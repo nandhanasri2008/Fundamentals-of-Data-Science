@@ -1,0 +1,180 @@
+
+======================================================================
+STEP 1 : DATASET CREATION
+======================================================================
+Rows: 4940   Columns: 13
+
+First 5 rows:
+    district soil_type  rainfall_mm  temperature_c  irrigation_access recommended_crop
+0  Thanjavur     Black       1224.2           24.5                  1        Sugarcane
+1  Thanjavur  Alluvial       1248.8           28.8                  1        Sugarcane
+2  Thanjavur     Black       1148.2           28.7                  1        Sugarcane
+3  Thanjavur      Clay        991.2           29.2                  1             Rice
+4  Thanjavur      Clay       1189.6           28.1                  1             Rice
+
+======================================================================
+STEP 2 : DATA PREPARATION AND EDA
+======================================================================
+Missing values BEFORE cleaning:
+soil_ph         147
+nitrogen        147
+humidity_pct    147
+
+Duplicate rows BEFORE cleaning: 40
+Missing values AFTER cleaning : 0
+Rows AFTER removing duplicates: 4900
+
+Records per region type (note the imbalance):
+region_type
+Irrigated        2800
+Semi-arid        1350
+Drought-prone     750
+
+Crop distribution (%) by region type:
+recommended_crop  Cotton  Groundnut  Millets  Pulses  Rice  Sugarcane
+region_type                                                          
+Drought-prone        9.3       13.2     57.1     3.3   1.5       15.6
+Irrigated            0.1        0.4      0.0     0.0  54.9       44.5
+Semi-arid           22.5       21.6      3.1     3.7   8.9       40.2
+
+Average climate by region type:
+               rainfall_mm  temperature_c  humidity_pct  irrigation_access  fertilizer_kg_ha
+region_type                                                                                 
+Drought-prone        417.0           32.3          52.7                0.1              70.5
+Irrigated           1116.9           28.5          77.2                0.9             121.0
+Semi-arid            651.2           29.7          61.8                0.4              69.0
+
+======================================================================
+STEP 3 : MODEL TRAINING AND COMPARISON
+======================================================================
+Training rows: 3675   Testing rows: 1225
+              Model  Accuracy  Macro F1  Weighted F1
+Logistic Regression    0.8318    0.7646       0.8312
+  Gradient Boosting    0.8196    0.7395       0.8186
+      Random Forest    0.8098    0.6978       0.8065
+                KNN    0.7673    0.6892       0.7675
+      Decision Tree    0.7331    0.6225       0.7342
+
+Best overall model (highest Macro F1): Logistic Regression
+
+======================================================================
+STEP 4 : REGION-WISE PERFORMANCE (BIAS CHECK)
+======================================================================
+Accuracy by region:
+Region               Irrigated  Semi-arid  Drought-prone
+Model                                                   
+Decision Tree            0.824      0.589          0.652
+Gradient Boosting        0.873      0.763          0.722
+KNN                      0.827      0.716          0.636
+Logistic Regression      0.886      0.763          0.754
+Random Forest            0.860      0.760          0.711
+
+F1-score (weighted) by region:
+Region               Irrigated  Semi-arid  Drought-prone
+Model                                                   
+Decision Tree            0.825      0.591          0.660
+Gradient Boosting        0.871      0.763          0.715
+KNN                      0.825      0.712          0.633
+Logistic Regression      0.884      0.769          0.749
+Random Forest            0.858      0.752          0.697
+
+Bias gap (Irrigated F1 minus Drought-prone F1)  -> bigger = more biased:
+Model
+Decision Tree          0.165
+Gradient Boosting      0.156
+KNN                    0.192
+Logistic Regression    0.136
+Random Forest          0.161
+
+======================================================================
+STEP 5 : UNSEEN-DISTRICT TEST (GroupKFold by district)
+======================================================================
+Each district is held out completely, then predicted by a model that never saw it.
+
+  Region type       District  Accuracy on unseen district
+    Irrigated      Tiruvarur                        0.921
+    Irrigated   Nagapattinam                        0.903
+    Irrigated          Erode                        0.877
+    Irrigated      Thanjavur                        0.871
+    Semi-arid          Salem                        0.811
+    Semi-arid     Coimbatore                        0.756
+    Semi-arid Tiruvannamalai                        0.747
+Drought-prone    Thoothukudi                        0.767
+Drought-prone Ramanathapuram                        0.753
+Drought-prone      Sivaganga                        0.700
+Drought-prone     Dharmapuri                        0.653
+Drought-prone   Virudhunagar                        0.627
+
+Overall unseen-district accuracy: 0.830
+Overall unseen-district Macro F1: 0.740
+
+======================================================================
+STEP 6 : BIAS REDUCTION USING REGION WEIGHTS
+======================================================================
+Idea: give drought-prone records MORE importance during training so the
+model does not copy only the pattern of the large irrigated regions.
+
+Weight per region: {'Irrigated': 0.58, 'Semi-arid': 1.21, 'Drought-prone': 2.18}
+       Region  F1 before  F1 after  Acc before  Acc after
+    Irrigated      0.884     0.887       0.886      0.887
+    Semi-arid      0.769     0.769       0.763      0.763
+Drought-prone      0.749     0.754       0.754      0.759
+
+Overall Accuracy : 0.8318 -> 0.8335
+Overall Macro F1 : 0.7646 -> 0.7707
+Bias gap (Irrigated - Drought F1): 0.136 -> 0.133
+Fairer gap? True   Accuracy drop: -0.0016 (allowed < 0.02)
+
+Model chosen for next steps: Logistic Regression (region-balanced)
+
+Top 8 features that drive the advice:
+rainfall_mm           0.162
+soil_type_Black       0.093
+temperature_c         0.089
+soil_type_Alluvial    0.083
+nitrogen              0.080
+soil_type_Clay        0.079
+soil_type_Sandy       0.068
+soil_type_Red         0.063
+
+======================================================================
+STEP 7 : WHEN MUST A HUMAN OFFICER REVIEW THE ADVICE?
+======================================================================
+Confidence threshold sweep (model's own confidence in its top crop):
+ Threshold  Auto-approved %  Accuracy of auto-approved  Sent to officer %
+       0.4           98.367                      0.844              1.633
+       0.5           93.061                      0.861              6.939
+       0.6           83.347                      0.890             16.653
+       0.7           71.265                      0.923             28.735
+       0.8           56.327                      0.958             43.673
+
+FINAL RULE: officer reviews the advice if ANY of these is true:
+  (a) model confidence < 60%                      -> 204 cases
+  (b) rainfall is extreme (|z-score| > 2 vs training)  -> 27 cases
+  (c) drought-prone district AND confidence < 75%      -> 87 cases
+
+Total sent to officer : 266 of 1225 (21.7%)
+Accuracy WITHOUT review rule (all cases)      : 0.833
+Accuracy of AUTO-APPROVED cases               : 0.898
+Accuracy of cases SENT to officer (risky ones): 0.602
+
+Review rate and auto-approved accuracy by region:
+       Region  Review rate %  Auto-approved accuracy
+    Irrigated          9.857                   0.914
+    Semi-arid         27.219                   0.858
+Drought-prone         56.150                   0.890
+
+======================================================================
+STEP 8 : FINAL DEPLOYMENT RECOMMENDATION
+======================================================================
+1. Deploy model        : Logistic Regression (region-balanced)
+2. Overall test result : Accuracy 0.833, Macro F1 0.771
+   Irrigated     : Accuracy 0.887, Weighted F1 0.887
+   Semi-arid     : Accuracy 0.763, Weighted F1 0.769
+   Drought-prone : Accuracy 0.759, Weighted F1 0.754
+3. Human review needed when: confidence < 60%, OR extreme rainfall,
+   OR drought-prone district with confidence < 75%.
+4. Re-train every season and keep collecting more drought-prone data.
+5. Publish region-wise accuracy to officers so that weaker areas get extra supervision.
+
+Saved: crop_advisory_dataset.csv, final_predictions.csv and charts/*.png
